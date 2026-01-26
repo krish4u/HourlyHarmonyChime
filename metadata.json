@@ -1,0 +1,8 @@
+
+{
+  "name": "Hourly Harmony Chime",
+  "description": "An elegant hourly clock application that plays a bell chime, announces the time using Gemini TTS, and follows up with a curated song choice. Features configurable active hours and volume controls.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
