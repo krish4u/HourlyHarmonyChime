@@ -30,7 +30,7 @@ export class AudioManager {
   static async playBells(count: number, volume: number): Promise<void> {
     await this.resume();
     const ctx = this.getAudioContext();
-    const bellUrl = 'public/audio/bell.mp3';
+    const bellUrl = '/audio/bell.mp3';
     
     let useFile = false;
     try {
