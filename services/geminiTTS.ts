@@ -42,7 +42,7 @@ export const announceTime = async (timeString: string, volume: number): Promise<
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
-      contents: [{ parts: [{ text: `Say naturally and clearly: The time is currently ${timeString}. Enjoy your next song.` }] }],
+      contents: [{ parts: [{ text: `Say naturally and clearly in Tamil language along with morning or noon or evening or night depending on the time: The time is currently ${timeString}.` }] }],
       config: {
         responseModalities: [Modality.AUDIO],
         speechConfig: {

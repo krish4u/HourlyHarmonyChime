@@ -24,12 +24,15 @@ const App: React.FC = () => {
 
   const formatNum = (n: number) => n.toString().padStart(3, '0');
 
-  const triggerHourlySequence = useCallback(async (dateObj: Date) => {
-    if (!settings.isEnabled) return;
+  const triggerHourlySequence = useCallback(async (dateObj: Date, isTest: boolean = false) => {
+    // If not a manual test, check if the system is globally enabled
+    if (!isTest && !settings.isEnabled) return;
     
     const hour = dateObj.getHours();
-    console.log(`[Sequence] Hourly trigger check for ${hour}:00`);
+    console.log(`[Sequence] ${isTest ? 'Manual' : 'Hourly'} trigger for ${hour}:00`);
 
+    // Only check range if it's NOT a manual test
+    if (!isTest) {
     const isWithinRange = settings.startHour <= settings.endHour 
       ? (hour >= settings.startHour && hour < settings.endHour)
       : (hour >= settings.startHour || hour < settings.endHour);
@@ -37,6 +40,7 @@ const App: React.FC = () => {
     if (!isWithinRange) {
       console.log(`[Sequence] Skipping: Hour ${hour} outside of active window.`);
       return;
+    }
     }
 
     // Unlocking AudioContext is mandatory for scheduled audio
@@ -112,8 +116,8 @@ const App: React.FC = () => {
   }, [settings, stopPlayback]);
 
   const testSequence = () => {
-    console.log("[Manual Trigger] Starting test sequence...");
-    triggerHourlySequence(new Date());
+    console.log("[Manual Trigger] Starting test sequence (bypassing range and enabled state)...");
+    triggerHourlySequence(new Date(), true);
   };
 
   useEffect(() => {
@@ -123,7 +127,7 @@ const App: React.FC = () => {
         const currentHour = now.getHours();
         if (lastTriggeredHour.current !== currentHour) {
           lastTriggeredHour.current = currentHour;
-        triggerHourlySequence(now);
+          triggerHourlySequence(now, false);
       }
       } else if (now.getMinutes() !== 0) {
         lastTriggeredHour.current = null;
@@ -155,9 +159,9 @@ const App: React.FC = () => {
           {/* Test Hourly Sequence Button Section */}
           <div className="glass-morphism rounded-3xl p-8 flex flex-col items-center text-center space-y-6 w-full max-w-2xl mx-auto shadow-2xl border border-white/5">
             <div className="space-y-2">
-              <h3 className="text-xl font-semibold text-slate-100">Diagnostics & Manual Trigger</h3>
+              <h3 className="text-xl font-semibold text-slate-100 uppercase tracking-widest">Diagnostics</h3>
               <p className="text-sm text-slate-400 max-w-sm mx-auto leading-relaxed">
-                Click below to immediately initiate the full hourly sequence. This helps verify that your <code className="text-sky-400">/audio</code> folder assets are accessible.
+                Manually trigger the sequence. This ignores active hours and global settings for testing purposes.
               </p>
             </div>
             
