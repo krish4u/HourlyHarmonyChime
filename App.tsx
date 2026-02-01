@@ -28,135 +28,163 @@ const App: React.FC = () => {
     if (!settings.isEnabled) return;
     
     const hour = dateObj.getHours();
+    console.log(`[Sequence] Hourly trigger check for ${hour}:00`);
+
     const isWithinRange = settings.startHour <= settings.endHour 
       ? (hour >= settings.startHour && hour < settings.endHour)
       : (hour >= settings.startHour || hour < settings.endHour);
 
-    if (!isWithinRange) return;
+    if (!isWithinRange) {
+      console.log(`[Sequence] Skipping: Hour ${hour} outside of active window.`);
+      return;
+    }
+
+    // Unlocking AudioContext is mandatory for scheduled audio
+    await AudioManager.resume();
 
     // 1. Chimes (Bells)
     let bellCount = hour % 12 || 12;
+    console.log(`[Sequence] Step 1: Bells (${bellCount} strikes)`);
     setPlayerState(PlayerState.CHIMING);
     await AudioManager.playBells(bellCount, settings.volume);
 
     // 2. Explicit Time Announcement
+    console.log(`[Sequence] Step 2: Time Announcement`);
     setPlayerState(PlayerState.ANNOUNCING_TIME);
     const displayHour = hour % 12 || 12;
     const ampm = hour >= 12 ? 'PM' : 'AM';
     await announceTime(`${displayHour} ${ampm}`, settings.volume);
 
-    // 3. Prep data for file sequence
-    const m = dateObj.getMonth();      // 0-11
-    const d = dateObj.getDate();       // 1-31
-    const dw = dateObj.getDay();       // 0-6 (Sun-Sat)
+    // 3. File Sequence
+    const m = dateObj.getMonth();
+    const d = dateObj.getDate();
+    const dw = dateObj.getDay();
     const monthKey = MONTH_KEYS[m];
 
-    // --- Sequence: Month -> Date -> Day -> Daily Song ---
-
-    // Month Announcement File
+    // Month
+    console.log(`[Sequence] Step 3: Month`);
     setPlayerState(PlayerState.ANNOUNCING_MONTH);
     const monthPath = `/audio/month/${formatNum(m + 1)}.mp3`;
     setCurrentAssetPath(monthPath);
     try {
       await AudioManager.playFile(monthPath, settings.volume);
     } catch {
+      console.warn(`[Sequence] ${monthPath} missing. Using TTS.`);
       await announceTime(dateObj.toLocaleString('default', { month: 'long' }), settings.volume);
     }
 
-    // Date Announcement File
+    // Date
+    console.log(`[Sequence] Step 4: Date`);
     setPlayerState(PlayerState.ANNOUNCING_DATE);
     const datePath = `/audio/date/${formatNum(d)}.mp3`;
     setCurrentAssetPath(datePath);
     try {
       await AudioManager.playFile(datePath, settings.volume);
     } catch {
+      console.warn(`[Sequence] ${datePath} missing. Using TTS.`);
       await announceTime(`The ${d}`, settings.volume);
     }
 
-    // Day Announcement File
+    // Day
+    console.log(`[Sequence] Step 5: Day`);
     setPlayerState(PlayerState.ANNOUNCING_DAY);
     const dayPath = `/audio/day/${formatNum(dw + 1)}.mp3`;
     setCurrentAssetPath(dayPath);
     try {
       await AudioManager.playFile(dayPath, settings.volume);
     } catch {
+      console.warn(`[Sequence] ${dayPath} missing. Using TTS.`);
       await announceTime(dateObj.toLocaleString('default', { weekday: 'long' }), settings.volume);
     }
 
-    // Daily Song (from 3-letter month folder)
+    // Song
+    console.log(`[Sequence] Step 6: Daily Song`);
     setPlayerState(PlayerState.PLAYING_SONG);
     const songPath = `/audio/${monthKey}/${formatNum(d)}.mp3`;
     setCurrentAssetPath(songPath);
     try {
       await AudioManager.playFile(songPath, settings.volume);
     } catch {
-      await announceTime(`Missing daily song track`, settings.volume);
+      console.warn(`[Sequence] ${songPath} missing.`);
     }
 
-    setPlayerState(PlayerState.IDLE);
-    setCurrentAssetPath(null);
-  }, [settings]);
+    stopPlayback();
+  }, [settings, stopPlayback]);
+
+  const testSequence = () => {
+    console.log("[Manual Trigger] Starting test sequence...");
+    triggerHourlySequence(new Date());
+  };
 
   useEffect(() => {
-    const checkTime = () => {
+    const timer = setInterval(() => {
       const now = new Date();
-      if (now.getMinutes() === 0 && lastTriggeredHour.current !== now.getHours()) {
-        lastTriggeredHour.current = now.getHours();
+      if (now.getMinutes() === 0 && now.getSeconds() === 0) {
+        const currentHour = now.getHours();
+        if (lastTriggeredHour.current !== currentHour) {
+          lastTriggeredHour.current = currentHour;
         triggerHourlySequence(now);
       }
-    };
-    const interval = setInterval(checkTime, 1000);
-    return () => clearInterval(interval);
+      } else if (now.getMinutes() !== 0) {
+        lastTriggeredHour.current = null;
+      }
+    }, 1000);
+
+    return () => clearInterval(timer);
   }, [triggerHourlySequence]);
 
-  const testSequence = () => triggerHourlySequence(new Date());
-
   return (
-    <div className="min-h-screen pb-20 px-4 md:px-8">
-      <header className="py-12 flex flex-col items-center">
-        <h1 className="text-sm font-bold tracking-[0.4em] text-sky-500 uppercase mb-4">
-          Atmospheric Chronometer
-        </h1>
-        <Clock />
-        <PlayerStatus 
-          state={playerState} 
-          currentAsset={currentAssetPath} 
-          onStop={stopPlayback}
-        />
-      </header>
-
-      <main className="max-w-4xl mx-auto space-y-8">
-        <Settings settings={settings} onUpdate={setSettings} />
-        
-        <div className="glass-morphism rounded-3xl p-8 flex flex-col items-center text-center space-y-4">
-          <div className="p-3 bg-sky-500/10 rounded-full">
-            <svg className="w-8 h-8 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
-            </svg>
+    <div className="min-h-screen bg-slate-950 text-slate-200 selection:bg-sky-500/30">
+      <div className="max-w-4xl mx-auto px-4 py-12 md:py-20 flex flex-col items-center">
+        <header className="w-full text-center space-y-4 mb-12">
+          <div className="inline-block px-4 py-1.5 rounded-full bg-sky-500/10 border border-sky-500/20 text-sky-400 text-xs font-bold uppercase tracking-widest animate-pulse">
+            Chrono Chime Audio System
           </div>
-          <h2 className="text-xl font-semibold text-slate-100">Project Audio Library</h2>
-          <p className="text-slate-400 text-sm max-w-md">
-            The system plays files from your project's <code className="text-sky-300">/audio</code> folder. 
-            <br/><span className="text-xs mt-2 block opacity-70">Sequence: Bell → Voice Announcement → Monthly/Daily Tracks</span>
-          </p>
-          <div className="pt-4">
+          <Clock />
+        </header>
+
+        <main className="w-full space-y-8">
+          <PlayerStatus 
+            state={playerState} 
+            currentAsset={currentAssetPath} 
+            onStop={stopPlayback}
+          />
+          
+          <Settings settings={settings} onUpdate={setSettings} />
+
+          {/* Test Hourly Sequence Button Section */}
+          <div className="glass-morphism rounded-3xl p-8 flex flex-col items-center text-center space-y-6 w-full max-w-2xl mx-auto shadow-2xl border border-white/5">
+            <div className="space-y-2">
+              <h3 className="text-xl font-semibold text-slate-100">Diagnostics & Manual Trigger</h3>
+              <p className="text-sm text-slate-400 max-w-sm mx-auto leading-relaxed">
+                Click below to immediately initiate the full hourly sequence. This helps verify that your <code className="text-sky-400">/audio</code> folder assets are accessible.
+              </p>
+            </div>
+            
             <button
               onClick={testSequence}
               disabled={playerState !== PlayerState.IDLE}
-              className="flex items-center space-x-2 bg-sky-600 hover:bg-sky-500 text-white px-8 py-4 rounded-2xl transition-all shadow-xl shadow-sky-900/20 disabled:opacity-30"
+              className="group relative flex items-center space-x-3 bg-sky-600 hover:bg-sky-500 active:scale-95 text-white px-10 py-4 rounded-2xl transition-all shadow-xl shadow-sky-900/40 disabled:opacity-30 disabled:cursor-not-allowed disabled:grayscale"
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="absolute -inset-0.5 bg-sky-400 rounded-2xl blur opacity-20 group-hover:opacity-40 transition-opacity"></div>
+              <svg className="w-6 h-6 relative" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
               </svg>
-              <span className="font-bold uppercase tracking-widest text-sm">Test Hourly Sequence</span>
+              <span className="font-bold uppercase tracking-widest text-sm relative">Test Hourly Sequence</span>
             </button>
           </div>
-        </div>
-      </main>
+        </main>
 
-      <footer className="mt-20 text-center text-slate-600 text-[10px] tracking-[0.3em] uppercase">
-        Static Asset Engine • Gemini TTS Enabled
-      </footer>
+        <footer className="mt-20 text-slate-600 text-sm flex flex-col items-center space-y-2">
+          <p>© 2024 Chrono Chime • Automated Hourly Scheduler</p>
+          <div className="flex space-x-4">
+            <span className="flex items-center space-x-1">
+              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+              <span>System Online</span>
+            </span>
+          </div>
+        </footer>
+      </div>
     </div>
   );
 };

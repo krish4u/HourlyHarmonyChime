@@ -4,6 +4,18 @@ export class AudioManager {
   private static audioCtx: AudioContext | null = null;
   private static currentResolve: (() => void) | null = null;
 
+  static async resume() {
+    const ctx = this.getAudioContext();
+    if (ctx.state === 'suspended') {
+      try {
+        await ctx.resume();
+        console.log("AudioContext resumed successfully.");
+      } catch (e) {
+        console.error("Failed to resume AudioContext:", e);
+      }
+    }
+  }
+
   private static getAudioContext() {
     if (!this.audioCtx) {
       this.audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -13,44 +25,54 @@ export class AudioManager {
 
   /**
    * Plays the hourly bells. 
-   * Tries to find /audio/bell.mp3 first, then falls back to synthetic sound.
+   * Tries to play /audio/bell.mp3 first. If it fails, falls back to synthetic sound.
    */
   static async playBells(count: number, volume: number): Promise<void> {
+    await this.resume();
     const ctx = this.getAudioContext();
-    const bellUrl = '/audio/bell.mp3';
+    const bellUrl = 'public/audio/bell.mp3';
     
-    // Check if bell.mp3 exists via HEAD request to avoid downloading it just to check
     let useFile = false;
     try {
-      const resp = await fetch(bellUrl, { method: 'HEAD' });
-      if (resp.ok) useFile = true;
+      // Check if file is available by trying to load it in a silent way
+      useFile = await new Promise((resolve) => {
+        const audio = new Audio(bellUrl);
+        audio.oncanplaythrough = () => resolve(true);
+        audio.onerror = () => resolve(false);
+        // Timeout check for file existence
+        setTimeout(() => resolve(false), 2000);
+      });
     } catch (e) {
+      console.error("Error checking bell file:", e);
       useFile = false;
     }
 
+    console.log(`Bells: Using ${useFile ? 'external file (/audio/bell.mp3)' : 'synthetic fallback'}`);
+
     for (let i = 0; i < count; i++) {
       if (useFile) {
-        // Use a lightweight play method for bells to allow overlap (natural reverb)
         await this.playBellStrike(bellUrl, volume);
       } else {
       await this.playSyntheticBell(ctx, volume);
       }
-      // Spacing between strikes (1.2 seconds for better natural feel)
+      // Wait for the strike to finish + gap
       await new Promise(r => setTimeout(r, 1200));
     }
   }
 
-  /**
-   * Internal helper to play a bell strike without stopping global musicAudio.
-   * This allows bell strikes to overlap their "tails" naturally.
-   */
   private static playBellStrike(url: string, volume: number): Promise<void> {
     return new Promise((resolve) => {
       const audio = new Audio(url);
       audio.volume = volume;
       audio.onended = () => resolve();
-      audio.onerror = () => resolve(); // Fallback: resolve anyway to prevent hanging the sequence
-      audio.play().catch(() => resolve());
+      audio.onerror = (e) => {
+        console.error(`Bell strike error for ${url}:`, e);
+        resolve();
+      };
+      audio.play().catch((e) => {
+        console.error(`Bell play interrupted:`, e);
+        resolve();
+      });
     });
   }
 
@@ -78,6 +100,7 @@ export class AudioManager {
    */
   static async playFile(url: string, volume: number): Promise<void> {
     this.stopAll();
+    console.log(`[AudioManager] Attempting to play: ${url}`);
     
     this.musicAudio = new Audio(url);
     this.musicAudio.volume = volume;
@@ -86,11 +109,13 @@ export class AudioManager {
       this.currentResolve = resolve;
       
       const onEnded = () => {
+        console.log(`[AudioManager] Finished playing: ${url}`);
         cleanup();
         resolve();
       };
 
       const onError = (e: any) => {
+        console.error(`[AudioManager] FAILED to load: ${url}. (Browser might be blocking or file missing). Error:`, e);
         cleanup();
         reject(new Error(`Failed to load: ${url}`));
       };
@@ -105,6 +130,7 @@ export class AudioManager {
       this.musicAudio?.addEventListener('error', onError);
       
       this.musicAudio?.play().catch(e => {
+        console.error(`[AudioManager] Play error for ${url}:`, e);
         cleanup();
         reject(e);
       });
