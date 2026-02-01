@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Modality } from "@google/genai";
 
 const decode = (base64: string) => {
@@ -30,14 +31,15 @@ const decodeAudioData = async (
 };
 
 export const announceTime = async (timeString: string, volume: number): Promise<void> => {
-  const apiKey = process.env.API_KEY;
-  if (!apiKey) {
+  // Fix: Check for process.env.API_KEY directly as it is a hard requirement.
+  if (!process.env.API_KEY) {
     console.warn("API Key missing. Skipping time announcement.");
     return Promise.resolve();
   }
 
   try {
-    const ai = new GoogleGenAI({ apiKey });
+    // Fix: Initialize GoogleGenAI using process.env.API_KEY directly in the named parameter.
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
       contents: [{ parts: [{ text: `Say naturally and clearly: The time is currently ${timeString}. Enjoy your next song.` }] }],

@@ -1,86 +1,118 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { AppSettings, Song, PlayerState } from './types';
-import { INITIAL_SETTINGS, DEMO_SONGS } from './constants';
+import { AppSettings, PlayerState } from './types';
+import { INITIAL_SETTINGS } from './constants';
 import Clock from './components/Clock';
 import Settings from './components/Settings';
-import MusicLibrary from './components/MusicLibrary';
 import PlayerStatus from './components/PlayerStatus';
 import { AudioManager } from './services/audioManager';
 import { announceTime } from './services/geminiTTS';
 
+const MONTH_KEYS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
 const App: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings>(INITIAL_SETTINGS);
-  const [songs, setSongs] = useState<Song[]>(DEMO_SONGS);
   const [playerState, setPlayerState] = useState<PlayerState>(PlayerState.IDLE);
-  const [currentSong, setCurrentSong] = useState<Song | null>(null);
+  const [currentAssetPath, setCurrentAssetPath] = useState<string | null>(null);
   const lastTriggeredHour = useRef<number | null>(null);
 
   const stopPlayback = useCallback(() => {
     AudioManager.stopAll();
     setPlayerState(PlayerState.IDLE);
-    setCurrentSong(null);
+    setCurrentAssetPath(null);
   }, []);
 
-  const triggerHourlySequence = useCallback(async (hour: number) => {
+  const formatNum = (n: number) => n.toString().padStart(3, '0');
+
+  const triggerHourlySequence = useCallback(async (dateObj: Date) => {
     if (!settings.isEnabled) return;
     
-    // Check if hour is in active range
+    const hour = dateObj.getHours();
     const isWithinRange = settings.startHour <= settings.endHour 
       ? (hour >= settings.startHour && hour < settings.endHour)
-      : (hour >= settings.startHour || hour < settings.endHour); // Handles wrapping past midnight
+      : (hour >= settings.startHour || hour < settings.endHour);
 
     if (!isWithinRange) return;
 
-    // 12-hour bell count logic
-    let bellCount = hour % 12;
-    if (bellCount === 0) bellCount = 12;
-
-    const timeString = hour === 0 ? "12 AM" : hour < 12 ? `${hour} AM` : hour === 12 ? "12 PM" : `${hour - 12} PM`;
-
+    // 1. Chimes (Bells)
+    let bellCount = hour % 12 || 12;
     setPlayerState(PlayerState.CHIMING);
     await AudioManager.playBells(bellCount, settings.volume);
 
-    setPlayerState(PlayerState.ANNOUNCING);
-    await announceTime(timeString, settings.volume);
+    // 2. Explicit Time Announcement
+    setPlayerState(PlayerState.ANNOUNCING_TIME);
+    const displayHour = hour % 12 || 12;
+    const ampm = hour >= 12 ? 'PM' : 'AM';
+    await announceTime(`${displayHour} ${ampm}`, settings.volume);
 
-    if (songs.length > 0) {
-      setPlayerState(PlayerState.PLAYING_SONG);
-      const randomSong = songs[Math.floor(Math.random() * songs.length)];
-      setCurrentSong(randomSong);
-      await AudioManager.playSong(randomSong, settings.volume);
+    // 3. Prep data for file sequence
+    const m = dateObj.getMonth();      // 0-11
+    const d = dateObj.getDate();       // 1-31
+    const dw = dateObj.getDay();       // 0-6 (Sun-Sat)
+    const monthKey = MONTH_KEYS[m];
+
+    // --- Sequence: Month -> Date -> Day -> Daily Song ---
+
+    // Month Announcement File
+    setPlayerState(PlayerState.ANNOUNCING_MONTH);
+    const monthPath = `/audio/month/${formatNum(m + 1)}.mp3`;
+    setCurrentAssetPath(monthPath);
+    try {
+      await AudioManager.playFile(monthPath, settings.volume);
+    } catch {
+      await announceTime(dateObj.toLocaleString('default', { month: 'long' }), settings.volume);
+    }
+
+    // Date Announcement File
+    setPlayerState(PlayerState.ANNOUNCING_DATE);
+    const datePath = `/audio/date/${formatNum(d)}.mp3`;
+    setCurrentAssetPath(datePath);
+    try {
+      await AudioManager.playFile(datePath, settings.volume);
+    } catch {
+      await announceTime(`The ${d}`, settings.volume);
+    }
+
+    // Day Announcement File
+    setPlayerState(PlayerState.ANNOUNCING_DAY);
+    const dayPath = `/audio/day/${formatNum(dw + 1)}.mp3`;
+    setCurrentAssetPath(dayPath);
+    try {
+      await AudioManager.playFile(dayPath, settings.volume);
+    } catch {
+      await announceTime(dateObj.toLocaleString('default', { weekday: 'long' }), settings.volume);
+    }
+
+    // Daily Song (from 3-letter month folder)
+    setPlayerState(PlayerState.PLAYING_SONG);
+    const songPath = `/audio/${monthKey}/${formatNum(d)}.mp3`;
+    setCurrentAssetPath(songPath);
+    try {
+      await AudioManager.playFile(songPath, settings.volume);
+    } catch {
+      await announceTime(`Missing daily song track`, settings.volume);
     }
 
     setPlayerState(PlayerState.IDLE);
-    setCurrentSong(null);
-  }, [settings, songs]);
+    setCurrentAssetPath(null);
+  }, [settings]);
 
   useEffect(() => {
     const checkTime = () => {
       const now = new Date();
-      const currentHour = now.getHours();
-      const currentMinute = now.getMinutes();
-
-      // Trigger if it's the start of a new hour
-      if (currentMinute === 0 && lastTriggeredHour.current !== currentHour) {
-        lastTriggeredHour.current = currentHour;
-        triggerHourlySequence(currentHour);
+      if (now.getMinutes() === 0 && lastTriggeredHour.current !== now.getHours()) {
+        lastTriggeredHour.current = now.getHours();
+        triggerHourlySequence(now);
       }
     };
-
     const interval = setInterval(checkTime, 1000);
     return () => clearInterval(interval);
   }, [triggerHourlySequence]);
 
-  // Handle manual testing/forcing a sequence for demo purposes
-  const testSequence = () => {
-    const now = new Date();
-    triggerHourlySequence(now.getHours());
-  };
+  const testSequence = () => triggerHourlySequence(new Date());
 
   return (
     <div className="min-h-screen pb-20 px-4 md:px-8">
-      {/* Top Header Section */}
       <header className="py-12 flex flex-col items-center">
         <h1 className="text-sm font-bold tracking-[0.4em] text-sky-500 uppercase mb-4">
           Atmospheric Chronometer
@@ -88,34 +120,42 @@ const App: React.FC = () => {
         <Clock />
         <PlayerStatus 
           state={playerState} 
-          currentSong={currentSong} 
+          currentAsset={currentAssetPath} 
           onStop={stopPlayback}
         />
       </header>
 
-      {/* Main Content Sections */}
       <main className="max-w-4xl mx-auto space-y-8">
         <Settings settings={settings} onUpdate={setSettings} />
-        <MusicLibrary songs={songs} onSongsChange={setSongs} />
-
-        <div className="flex justify-center pt-8">
-          <button
-            onClick={testSequence}
-            disabled={playerState !== PlayerState.IDLE}
-            className="flex items-center space-x-2 bg-slate-800 hover:bg-slate-700 text-slate-300 px-6 py-3 rounded-2xl transition-all border border-slate-700 disabled:opacity-50"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        
+        <div className="glass-morphism rounded-3xl p-8 flex flex-col items-center text-center space-y-4">
+          <div className="p-3 bg-sky-500/10 rounded-full">
+            <svg className="w-8 h-8 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
             </svg>
-            <span className="font-medium">Trigger Sequence Now</span>
-          </button>
+          </div>
+          <h2 className="text-xl font-semibold text-slate-100">Project Audio Library</h2>
+          <p className="text-slate-400 text-sm max-w-md">
+            The system plays files from your project's <code className="text-sky-300">/audio</code> folder. 
+            <br/><span className="text-xs mt-2 block opacity-70">Sequence: Bell → Voice Announcement → Monthly/Daily Tracks</span>
+          </p>
+          <div className="pt-4">
+            <button
+              onClick={testSequence}
+              disabled={playerState !== PlayerState.IDLE}
+              className="flex items-center space-x-2 bg-sky-600 hover:bg-sky-500 text-white px-8 py-4 rounded-2xl transition-all shadow-xl shadow-sky-900/20 disabled:opacity-30"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+              </svg>
+              <span className="font-bold uppercase tracking-widest text-sm">Test Hourly Sequence</span>
+            </button>
+          </div>
         </div>
       </main>
 
-      {/* Footer Branding */}
-      <footer className="mt-20 text-center text-slate-600 text-xs tracking-widest uppercase">
-        Built with Google Gemini & Tailwind CSS
+      <footer className="mt-20 text-center text-slate-600 text-[10px] tracking-[0.3em] uppercase">
+        Static Asset Engine • Gemini TTS Enabled
       </footer>
     </div>
   );
